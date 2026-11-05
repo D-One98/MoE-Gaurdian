@@ -17,10 +17,12 @@ class Settings:
     cors_origins: List[str] = field(
         default_factory=lambda: [
             origin.strip()
-            for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173,*").split(",")
+            for origin in os.getenv(
+                "CORS_ORIGINS",
+                "http://localhost:3000,http://localhost:5173",
+            ).split(",")
             if origin.strip()
         ]
     )
-
 
 settings = Settings()

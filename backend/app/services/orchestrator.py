@@ -52,6 +52,11 @@ class VerityMoEOrchestrator:
 
         all_findings: List[UnifiedFinding] = rg_findings + cg_findings
         engine_executions = [rg_exec, cg_exec]
+        mandatory_policies_enforced = all(
+            execution.mandatory_enforced
+            and execution.execution_state == ExecutionState.OK
+            for execution in engine_executions
+        )
 
         any_engine_failed = any(
             e.execution_state in (ExecutionState.ERROR, ExecutionState.INSUFFICIENT_DATA)
@@ -86,7 +91,7 @@ class VerityMoEOrchestrator:
             document_revision_hash=doc_rev_hash,
             overall_status=overall_status,
             human_review_required=human_review_required,
-            mandatory_policies_enforced=True,
+            mandatory_policies_enforced=mandatory_policies_enforced,
             engine_executions=engine_executions,
             findings=all_findings,
             blocks=request.blocks,
@@ -164,6 +169,7 @@ class VerityMoEOrchestrator:
             "audit_output_sha256_hash": output_hash,
             "approval_state": new_status.value,
             "approver_role": actor_role.value,
+            "review_notes": override_justification,
             "approved_at_utc": now_utc,
             "hmac_key_id": settings.hmac_key_id,
             "previous_snapshot_hmac": self._last_snapshot_hmac,
@@ -177,7 +183,6 @@ class VerityMoEOrchestrator:
 
         snapshot = AuditSnapshotRecord(
             **canonical_snapshot_payload,
-            review_notes=override_justification,
             snapshot_hmac_signature=signature,
         )
         self._last_snapshot_hmac = signature

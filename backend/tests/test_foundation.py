@@ -1,3 +1,8 @@
+import hashlib
+import hmac
+import json
+
+from app.core.config import settings
 from fastapi.testclient import TestClient
 from app.main import app
 
@@ -165,6 +170,29 @@ def test_maker_checker_and_hmac_snapshot_signing():
     assert snap is not None
     assert snap["approval_state"] == "APPROVED"
     assert len(snap["snapshot_hmac_signature"]) == 64
+    snapshot_payload = {
+        key: value
+        for key, value in snap.items()
+        if key != "snapshot_hmac_signature"
+    }
+
+    canonical_bytes = json.dumps(
+        snapshot_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    expected_signature = hmac.new(
+        settings.hmac_signing_secret.encode("utf-8"),
+        canonical_bytes,
+        hashlib.sha256,
+    ).hexdigest()
+
+    assert snap["review_notes"] == "Approved for lab teaser with footnote."
+    assert hmac.compare_digest(
+        snap["snapshot_hmac_signature"],
+        expected_signature,
+    )
 
 
 def test_invalid_request_handling():
