@@ -56,40 +56,78 @@ class RuleCategory(str, Enum):
 class BrandRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    rule_id: str
+    rule_id: str = Field(..., min_length=3, max_length=64)
     category: RuleCategory
-    title: str
-    description: str
+    title: str = Field(..., min_length=3, max_length=255)
+    description: str = Field(..., min_length=5)
     mandatory_flag: bool = True
     severity: Severity
-    pattern_or_target: str
+    pattern_or_target: str = Field(..., min_length=1)
     expected_replacement: Optional[str] = None
     numeric_max: Optional[float] = None
     numeric_unit: Optional[str] = None
-    document_id: str = "DOC-BRAND-CONSTITUTION-V1"
-    document_name: str = "Sample_Brand_Guidelines_v1.pdf"
-    verified_page_or_row: int = 1
-    version: str = "1.0"
-    campaign_scope: str = "GLOBAL"
+    document_id: str = Field(default="DOC-BRAND-CONSTITUTION-V1", min_length=1)
+    document_name: str = Field(default="Sample_Brand_Guidelines_v1.pdf", min_length=1)
+    verified_page_or_row: int = Field(default=1, ge=1)
+    version: str = Field(default="1.0", min_length=1)
+    campaign_scope: str = Field(default="GLOBAL", min_length=1)
+
+    @field_validator(
+        "rule_id",
+        "title",
+        "description",
+        "pattern_or_target",
+        "document_id",
+        "document_name",
+        "version",
+        "campaign_scope",
+    )
+    @classmethod
+    def validate_non_blank_rule_fields(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Field must not be blank or whitespace only.")
+        return v.strip()
 
 
 class ApprovedFact(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    fact_id: str
-    topic_key: str
-    subject_keywords: List[str]
-    canonical_text: str
+    fact_id: str = Field(..., min_length=3, max_length=64)
+    topic_key: str = Field(..., min_length=2, max_length=128)
+    subject_keywords: List[str] = Field(..., min_length=1)
+    canonical_text: str = Field(..., min_length=5)
     approved_numeric_value: float
-    numeric_unit: str
-    comparator: str = "up_to"
-    required_conditions: List[str]
+    numeric_unit: str = Field(..., min_length=1, max_length=64)
+    comparator: str = Field(default="up_to", pattern="^(up_to|exact|at_least)$")
+    required_conditions: List[str] = Field(default_factory=list)
     prohibited_overstatements: List[str] = Field(default_factory=list)
-    document_id: str = "DOC-APPROVED-FACTS-V1"
-    document_name: str = "Sample_Approved_Facts_Vault_v1.csv"
-    verified_page_or_row: int = 1
-    version: str = "1.0"
+    document_id: str = Field(default="DOC-APPROVED-FACTS-V1", min_length=1)
+    document_name: str = Field(default="Sample_Approved_Facts_Vault_v1.csv", min_length=1)
+    verified_page_or_row: int = Field(default=1, ge=1)
+    version: str = Field(default="1.0", min_length=1)
 
+    @field_validator(
+        "fact_id",
+        "topic_key",
+        "canonical_text",
+        "numeric_unit",
+        "document_id",
+        "document_name",
+        "version",
+    )
+    @classmethod
+    def validate_non_blank_fact_fields(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Field must not be blank or whitespace only.")
+        return v.strip()
+
+    @field_validator("subject_keywords")
+    @classmethod
+    def validate_subject_keywords(cls, v: List[str]) -> List[str]:
+        cleaned = [kw.strip() for kw in v if kw and kw.strip()]
+        if not cleaned:
+            raise ValueError("subject_keywords must contain at least one non-blank keyword.")
+        return cleaned
 
 class ContentBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -104,6 +142,20 @@ class ContentBlock(BaseModel):
             raise ValueError("Field must not be blank or whitespace only.")
         return v
 
+class VisualAssetInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    document_block_id: str = Field(default="blk-visual-asset-01", min_length=1)
+    filename: str = Field(default="creative.png", min_length=1)
+    mime_type: str = Field(..., min_length=1, description="Declared MIME type (image/png or image/jpeg)")
+    image_base64: str = Field(..., min_length=4, description="Base64-encoded image bytes")
+    alt_text: Optional[str] = None
+    declared_foreground_hex: Optional[str] = Field(
+        default=None, description="Optional reliably known foreground text hex (#RRGGBB)"
+    )
+    declared_background_hex: Optional[str] = Field(
+        default=None, description="Optional reliably known background hex (#RRGGBB)"
+    )
 
 class EvidenceReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -170,7 +222,7 @@ class AuditCreateRequest(BaseModel):
     submitted_by_role: DemoRole = DemoRole.CREATOR
     blocks: List[ContentBlock] = Field(..., min_length=1)
     alt_text: Optional[str] = None
-
+    visual_asset: Optional[VisualAssetInput] = None
 
 class AuditStatus(str, Enum):
     PENDING_REVIEW = "PENDING_REVIEW"

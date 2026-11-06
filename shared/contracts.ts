@@ -121,6 +121,7 @@ export interface AuditCreateRequest {
   submitted_by_role?: DemoRole;
   blocks: ContentBlock[];
   alt_text?: string | null;
+  visual_asset?: VisualAssetInput | null;
 }
 
 export interface AuditResponse {
@@ -144,4 +145,54 @@ export interface ReviewDecisionRequest {
   actor_role: DemoRole;
   decision: "APPROVE" | "REQUEST_CHANGES";
   override_justification?: string | null;
+}
+
+export type RuleCategory =
+  | "BANNED_TERM"
+  | "BRAND_CASING"
+  | "MANDATORY_DISCLAIMER"
+  | "NUMERIC_BOUND";
+
+export interface BrandRule {
+  rule_id: string;
+  category: RuleCategory;
+  title: string;
+  description: string;
+  mandatory_flag?: boolean;
+  severity: Severity;
+  pattern_or_target: string;
+  expected_replacement?: string | null;
+  numeric_max?: number | null;
+  numeric_unit?: string | null;
+  document_id?: string;
+  document_name?: string;
+  verified_page_or_row?: number;
+  version?: string;
+  campaign_scope?: string;
+}
+
+export interface ApprovedFact {
+  fact_id: string;
+  topic_key: string;
+  subject_keywords: string[];
+  canonical_text: string;
+  approved_numeric_value: number;
+  numeric_unit: string;
+  comparator?: "up_to" | "exact" | "at_least";
+  required_conditions?: string[];
+  prohibited_overstatements?: string[];
+  document_id?: string;
+  document_name?: string;
+  verified_page_or_row?: number;
+  version?: string;
+}
+
+export interface VisualAssetInput {
+  document_block_id?: string;
+  filename?: string;
+  mime_type: "image/png" | "image/jpeg" | "image/jpg" | string;
+  image_base64: string;
+  alt_text?: string | null;
+  declared_foreground_hex?: string | null;
+  declared_background_hex?: string | null;
 }

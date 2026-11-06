@@ -69,3 +69,20 @@ Returns 403 Forbidden if actor_role == "CREATOR" (Maker-Checker enforcement).
 Returns 403 Forbidden if overall_status == "ESCALATED_TO_AUTHORISED_REVIEWER" and actor_role is not "AUTHORISED_REVIEWER" or "WORKSPACE_ADMIN".
 
 Returns 400 Bad Request if approving a draft with non-SUPPORTED findings without a non-empty override_justification.
+
+# MoE-GUARDIAN — Project State (Session 2 Complete)
+
+## 1. Implemented & Verified in Sessions 1 & 2
+* **FastAPI & Unified Contracts:** Strict orthogonal Pydantic v2 schemas (`backend/app/schemas/contracts.py`) and synchronized TypeScript interfaces (`shared/contracts.ts`).
+* **SQLAlchemy 2.x Persistence (`backend/app/core/database.py`, `backend/app/models/orm_models.py`, `backend/app/repositories/governance_repo.py`):** Persistent storage for `BrandRuleModel`, `ApprovedFactModel`, `AuditRecordModel`, `AuditFindingModel`, and `ReviewSnapshotModel` with SQLite foreign-key enforcement, idempotent demo seeding, and transaction rollback.
+* **Brand Ingestion APIs (`POST /api/brand/rules`, `POST /api/brand/facts`):** Validated custom rule and fact ingestion with `409 Conflict` duplicate protection and immediate availability in subsequent audits.
+* **Deterministic Specialist Engines:**
+  * `RuleGuard`: Banned terms, brand casing (`AURORAGEAR`), mandatory disclaimers, and discount bounds.
+  * `ClaimGuard` Baseline: 4-state claim verification (`SUPPORTED`, `PARTIAL`, `CONTRADICTED`, `UNVERIFIABLE`) and fail-closed Rewrite Validation Coordinator.
+  * `VisualGuard` Baseline: Static PNG/JPEG validation, 5 MB size cap, 16 MP decompression-bomb protection, CIEDE2000 ($\Delta E$) brand palette comparison, `alt_text` check, and WCAG relative-luminance contrast (with `INSUFFICIENT_DATA` escalation when foreground/background regions cannot be reliably isolated).
+* **Hardened HMAC-SHA256 Review Snapshots:** Canonical snapshot signing covering `review_notes`, chained via `previous_snapshot_hmac` in persistent storage, with cryptographic tamper verification (`VerityMoEOrchestrator.verify_snapshot_hmac`).
+* **Automated Test Suite:** **27 passing Pytest tests** across 4 test modules using isolated temporary SQLite databases (`backend/tests/conftest.py`).
+
+## 2. Remaining Work for Subsequent Sessions
+* **Session 3 (Frontend & End-to-End User Workflow):** Connect `frontend/` UI to the Session 2 backend endpoints (`GET /api/demo/workspace`, `GET/POST /api/brand/rules`, `GET/POST /api/brand/facts`, `POST /api/audits`, `POST /api/audits/{audit_id}/review`).
+* **Session 4 (Deployment & Hardening):** Public cloud deployment (Vercel + Render/Railway) and Round 2 submission package verification.
