@@ -5,18 +5,25 @@ import type {
   AuditResponse,
   ContentBlock,
   DemoRole,
+  ReviewDecisionRequest,
   UnifiedFinding,
 } from './types/contracts';
 import {
   INITIAL_CONTENT_BLOCKS,
   INITIAL_MOCK_AUDIT_RESPONSE,
-  createMockAudit,
 } from './services/mockAdapter';
+import {
+  IS_MOCK_MODE,
+  runAuditService,
+  submitReviewDecisionService,
+} from './services/auditService';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { BlockEditorView } from './components/editor/BlockEditorView';
 import { FindingsView } from './components/audit/FindingsView';
+import { ReviewQueueView } from './components/review/ReviewQueueView';
+import { AuditRecordsView } from './components/review/AuditRecordsView';
+import { BrandConstitutionView } from './components/constitution/BrandConstitutionView';
 
-// Deterministic revision hash helper for stale-finding detection (Section 4D)
 function computeEditorRevisionHash(blocks: ContentBlock[], altText: string): string {
   const serialized =
     blocks.map((b) => `${b.document_block_id}:${b.text}`).join('||') +
@@ -55,7 +62,7 @@ export function App() {
   );
   const [nextBlockSeq, setNextBlockSeq] = useState<number>(4);
 
-  // Track which surgical rewrites or creator overrides have been applied
+  // Track applied rewrites and creator override justifications
   const [appliedFindingIds, setAppliedFindingIds] = useState<string[]>([]);
   const [findingOverrides, setFindingOverrides] = useState<Record<string, string>>({});
 
@@ -77,7 +84,7 @@ export function App() {
   // Stale-finding detection
   const isStale = currentRevisionHash !== audit.document_revision_hash;
 
-  // Update a block's text while strictly preserving its document_block_id
+  // Update a block's text while preserving its document_block_id
   const handleUpdateBlockText = (blockId: string, newText: string) => {
     setBlocks((prev) =>
       prev.map((b) =>
@@ -86,7 +93,7 @@ export function App() {
     );
   };
 
-  // Apply a backend-verified surgical rewrite directly to the target block
+  // Apply surgical rewrite to block
   const handleApplySurgicalRewrite = (finding: UnifiedFinding) => {
     if (
       !finding.document_block_id ||
@@ -114,7 +121,7 @@ export function App() {
     }));
   };
 
-  // Record a mandatory written justification for a finding override
+  // Save finding override justification
   const handleSaveFindingOverride = (findingId: string, justification: string) => {
     setFindingOverrides((prev) => ({
       ...prev,
@@ -127,23 +134,20 @@ export function App() {
     }));
   };
 
-  // Add a new canonical block with a stable ID
+  // Add / Remove / Reset Blocks
   const handleAddBlock = () => {
     const formattedNum = String(nextBlockSeq).padStart(2, '0');
-    const newBlock: ContentBlock = {
-      document_block_id: `blk-paragraph-${formattedNum}`,
-      text: '',
-    };
-    setBlocks((prev) => [...prev, newBlock]);
+    setBlocks((prev) => [
+      ...prev,
+      { document_block_id: `blk-paragraph-${formattedNum}`, text: '' },
+    ]);
     setNextBlockSeq((n) => n + 1);
   };
 
-  // Remove a block by ID
   const handleRemoveBlock = (blockId: string) => {
     setBlocks((prev) => prev.filter((b) => b.document_block_id !== blockId));
   };
 
-  // Reset blocks to initial launch announcement sample
   const handleResetDefaultBlocks = () => {
     const defaultAlt =
       'Enterprise product banner showing compliance dashboard on dark carbon background';
@@ -158,11 +162,11 @@ export function App() {
     });
   };
 
-  // Submit Draft to VERITY MoE Audit (Shows Animated 4-Piece Prism Loader)
-  const handleRunAudit = () => {
+  // Run VERITY MoE Audit via Service Layer
+  const handleRunAudit = async () => {
     setIsLoadingAudit(true);
-    setTimeout(() => {
-      const updatedAudit = createMockAudit(
+    try {
+      const updatedAudit = await runAuditService(
         {
           campaign_id: campaignId,
           submitted_by_role: currentRole,
@@ -173,8 +177,16 @@ export function App() {
       );
       setAppliedFindingIds([]);
       setAudit(updatedAudit);
+    } finally {
       setIsLoadingAudit(false);
-    }, 1800);
+    }
+  };
+
+  // Submit Maker-Checker Review Decision via Service Layer
+  const handleSubmitReviewDecision = async (req: ReviewDecisionRequest) => {
+    const updatedAudit = await submitReviewDecisionService(audit, req);
+    setAudit(updatedAudit);
+    setActiveRoute('records');
   };
 
   const triggerLoaderPreview = () => {
@@ -193,7 +205,7 @@ export function App() {
       orgId={audit.org_id}
       findingsCount={audit.findings.length}
       isStale={isStale}
-      isMockMode={true}
+      isMockMode={IS_MOCK_MODE}
       isLoadingAudit={isLoadingAudit}
       onTriggerDemoLoader={triggerLoaderPreview}
     >
@@ -240,19 +252,28 @@ export function App() {
         />
       )}
 
-      {activeRoute !== 'dashboard' &&
-        activeRoute !== 'editor' &&
-        activeRoute !== 'findings' && (
-          <div className="bg-[#121215] border border-zinc-800/90 rounded-xl p-6">
-            <h2 className="text-sm font-semibold text-zinc-100">
-              Next Up on Checklist:{' '}
-              <span className="font-mono text-emerald-400">{activeRoute}</span>
-            </h2>
-            <p className="text-xs text-zinc-400 mt-1">
-              Dashboard, Content Editor, and Audit Findings are now live! Next we will build the Review Queue, Brand Constitution, and Audit Records views.
-            </p>
-          </div>
-        )}
+      {activeRoute === 'review' && (
+        <ReviewQueueView
+          audit={audit}
+          currentRole={currentRole}
+          isStale={isStale}
+          appliedFindingIds={appliedFindingIds}
+          findingOverrides={findingOverrides}
+          onSubmitReviewDecision={handleSubmitReviewDecision}
+          onRunAudit={handleRunAudit}
+          onNavigate={setActiveRoute}
+        />
+      )}
+
+      {activeRoute === 'records' && (
+        <AuditRecordsView
+          audit={audit}
+          isMockMode={IS_MOCK_MODE}
+          onNavigate={setActiveRoute}
+        />
+      )}
+
+      {activeRoute === 'constitution' && <BrandConstitutionView />}
     </AppShell>
   );
 }
