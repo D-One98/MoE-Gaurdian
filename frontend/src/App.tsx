@@ -5,6 +5,7 @@ import type {
   AuditResponse,
   ContentBlock,
   DemoRole,
+  UnifiedFinding,
 } from './types/contracts';
 import {
   INITIAL_CONTENT_BLOCKS,
@@ -13,6 +14,7 @@ import {
 } from './services/mockAdapter';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { BlockEditorView } from './components/editor/BlockEditorView';
+import { FindingsView } from './components/audit/FindingsView';
 
 // Deterministic revision hash helper for stale-finding detection (Section 4D)
 function computeEditorRevisionHash(blocks: ContentBlock[], altText: string): string {
@@ -43,7 +45,7 @@ export function App() {
   const [currentRole, setCurrentRole] = useState<DemoRole>('CREATOR');
   const [isLoadingAudit, setIsLoadingAudit] = useState(false);
 
-  // Canonical Editor State (Source of Truth for Draft Editing)
+  // Canonical Editor State
   const [campaignId, setCampaignId] = useState<string>(
     INITIAL_MOCK_AUDIT_RESPONSE.campaign_id
   );
@@ -53,13 +55,17 @@ export function App() {
   );
   const [nextBlockSeq, setNextBlockSeq] = useState<number>(4);
 
+  // Track which surgical rewrites or creator overrides have been applied
+  const [appliedFindingIds, setAppliedFindingIds] = useState<string[]>([]);
+  const [findingOverrides, setFindingOverrides] = useState<Record<string, string>>({});
+
   // Current live revision hash of the editor
   const currentRevisionHash = useMemo(
     () => computeEditorRevisionHash(blocks, altText),
     [blocks, altText]
   );
 
-  // Active Audit Response State (Initialised in sync with initial blocks)
+  // Active Audit Response State
   const [audit, setAudit] = useState<AuditResponse>(() => ({
     ...INITIAL_MOCK_AUDIT_RESPONSE,
     document_revision_hash: computeEditorRevisionHash(
@@ -68,7 +74,7 @@ export function App() {
     ),
   }));
 
-  // Stale-finding detection: True whenever editor content differs from last audited hash
+  // Stale-finding detection
   const isStale = currentRevisionHash !== audit.document_revision_hash;
 
   // Update a block's text while strictly preserving its document_block_id
@@ -78,6 +84,47 @@ export function App() {
         b.document_block_id === blockId ? { ...b, text: newText } : b
       )
     );
+  };
+
+  // Apply a backend-verified surgical rewrite directly to the target block
+  const handleApplySurgicalRewrite = (finding: UnifiedFinding) => {
+    if (
+      !finding.document_block_id ||
+      !finding.rewrite_candidate ||
+      !finding.rewrite_candidate.backend_revalidation.revalidation_passed
+    ) {
+      return;
+    }
+
+    const updatedBlocks = blocks.map((b) => {
+      if (b.document_block_id !== finding.document_block_id) return b;
+      return {
+        ...b,
+        text: finding.rewrite_candidate!.suggested_text,
+      };
+    });
+
+    const newSyncedHash = computeEditorRevisionHash(updatedBlocks, altText);
+    setBlocks(updatedBlocks);
+    setAppliedFindingIds((prev) => [...prev, finding.finding_id]);
+    setAudit((prev) => ({
+      ...prev,
+      blocks: updatedBlocks,
+      document_revision_hash: newSyncedHash,
+    }));
+  };
+
+  // Record a mandatory written justification for a finding override
+  const handleSaveFindingOverride = (findingId: string, justification: string) => {
+    setFindingOverrides((prev) => ({
+      ...prev,
+      [findingId]: justification,
+    }));
+    setAudit((prev) => ({
+      ...prev,
+      overall_status: 'ESCALATED_TO_AUTHORISED_REVIEWER',
+      human_review_required: true,
+    }));
   };
 
   // Add a new canonical block with a stable ID
@@ -102,6 +149,8 @@ export function App() {
       'Enterprise product banner showing compliance dashboard on dark carbon background';
     setBlocks(INITIAL_CONTENT_BLOCKS);
     setAltText(defaultAlt);
+    setAppliedFindingIds([]);
+    setFindingOverrides({});
     const syncedHash = computeEditorRevisionHash(INITIAL_CONTENT_BLOCKS, defaultAlt);
     setAudit({
       ...INITIAL_MOCK_AUDIT_RESPONSE,
@@ -122,6 +171,7 @@ export function App() {
         },
         currentRevisionHash
       );
+      setAppliedFindingIds([]);
       setAudit(updatedAudit);
       setIsLoadingAudit(false);
     }, 1800);
@@ -177,17 +227,32 @@ export function App() {
         />
       )}
 
-      {activeRoute !== 'dashboard' && activeRoute !== 'editor' && (
-        <div className="bg-[#121215] border border-zinc-800/90 rounded-xl p-6">
-          <h2 className="text-sm font-semibold text-zinc-100">
-            Next Up on Checklist:{' '}
-            <span className="font-mono text-emerald-400">{activeRoute}</span>
-          </h2>
-          <p className="text-xs text-zinc-400 mt-1">
-            Dashboard and Content Editor are now live! Select "Dashboard" or "Content Editor" in the left sidebar.
-          </p>
-        </div>
+      {activeRoute === 'findings' && (
+        <FindingsView
+          audit={audit}
+          isStale={isStale}
+          appliedFindingIds={appliedFindingIds}
+          findingOverrides={findingOverrides}
+          onApplyRewrite={handleApplySurgicalRewrite}
+          onSaveFindingOverride={handleSaveFindingOverride}
+          onRunAudit={handleRunAudit}
+          onNavigate={setActiveRoute}
+        />
       )}
+
+      {activeRoute !== 'dashboard' &&
+        activeRoute !== 'editor' &&
+        activeRoute !== 'findings' && (
+          <div className="bg-[#121215] border border-zinc-800/90 rounded-xl p-6">
+            <h2 className="text-sm font-semibold text-zinc-100">
+              Next Up on Checklist:{' '}
+              <span className="font-mono text-emerald-400">{activeRoute}</span>
+            </h2>
+            <p className="text-xs text-zinc-400 mt-1">
+              Dashboard, Content Editor, and Audit Findings are now live! Next we will build the Review Queue, Brand Constitution, and Audit Records views.
+            </p>
+          </div>
+        )}
     </AppShell>
   );
 }
