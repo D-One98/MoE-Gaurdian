@@ -280,3 +280,124 @@ class ReviewDecisionRequest(BaseModel):
     actor_role: DemoRole
     decision: str = Field(..., pattern="^(APPROVE|REQUEST_CHANGES)$")
     override_justification: Optional[str] = None
+
+import re
+
+
+class BrandPaletteItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    palette_id: str = Field(..., min_length=3, max_length=64)
+    name: str = Field(..., min_length=2, max_length=128)
+    hex: str = Field(..., description="Hex colour code (#RRGGBB)")
+    max_delta_e: float = Field(default=15.0, gt=0.0, le=100.0)
+    document_id: str = Field(default="DOC-BRAND-CONSTITUTION-V1", min_length=1)
+    document_name: str = Field(default="Sample_Brand_Guidelines_v1.pdf", min_length=1)
+    verified_page_or_row: int = Field(default=6, ge=1)
+    version: str = Field(default="1.0", min_length=1)
+
+    @field_validator("palette_id", "name", "document_id", "document_name", "version")
+    @classmethod
+    def validate_non_blank_palette_fields(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Field must not be blank.")
+        return v.strip()
+
+    @field_validator("hex")
+    @classmethod
+    def validate_hex_format(cls, v: str) -> str:
+        cleaned = v.strip().upper()
+        if not re.match(r"^#[0-9A-F]{6}$", cleaned):
+            raise ValueError("hex must be a valid 6-digit hex colour in '#RRGGBB' format.")
+        return cleaned
+
+
+class ExtractedPageMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    page_number: int = Field(..., ge=1)
+    char_count: int = Field(..., ge=0)
+    extracted_text: str
+    prompt_injection_signals_detected: bool = False
+
+
+class GuidelineUploadPreviewResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    batch_id: str
+    org_id: str
+    document_id: str
+    document_name: str
+    status: str = Field(..., description="PENDING_CONFIRMATION or CONFIRMED")
+    page_count: int
+    extraction_status: str = Field(..., description="OK or IMAGE_ONLY_OR_SCANNED_UNSUPPORTED")
+    prompt_shield_isolated: bool = True
+    pages: List[ExtractedPageMetadata]
+    candidate_rules: List[BrandRule]
+    warnings: List[str] = Field(default_factory=list)
+
+
+class GuidelineConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    brand_constitution_version: str = Field(default="1.0", min_length=1)
+    confirmed_rules: List[BrandRule] = Field(..., min_length=1)
+
+
+class CsvRowError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    row_number: int
+    fact_id: Optional[str] = None
+    error_code: str
+    message: str
+
+
+class CsvFactsUploadResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: str
+    document_name: str
+    total_rows_processed: int
+    saved_facts_count: int
+    saved_facts: List[ApprovedFact]
+    row_errors: List[CsvRowError]
+
+class OnDemandRewriteRequest(BaseModel):
+    """
+    Request payload for on-demand surgical rewrite generation and fail-closed validation.
+    extra='forbid' ensures clients cannot forge or supply candidate_verification_status
+    or revalidation_passed booleans.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    custom_candidate_text: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Optional creator-edited rewrite text to validate; if omitted, VoiceGuard generates candidates on demand.",
+    )
+    preserve_tone_notes: Optional[str] = Field(
+        default=None,
+        max_length=255,
+        description="Optional lightweight tone hint (e.g., 'informative', 'confident').",
+    )
+
+    @field_validator("custom_candidate_text")
+    @classmethod
+    def validate_custom_candidate_not_blank(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.strip():
+            raise ValueError("custom_candidate_text must not be blank or whitespace only.")
+        return v.strip() if v is not None else None
+
+
+class OnDemandRewriteResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    audit_id: str
+    org_id: str
+    finding_id: str
+    original_matched_text: str
+    original_finding_type: FindingType
+    original_verification_status: VerificationStatus
+    rewrite_candidates: List[RewriteCandidate]
+    selected_primary_candidate: Optional[RewriteCandidate] = None

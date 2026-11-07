@@ -97,6 +97,7 @@ def test_combined_multi_engine_orchestration_ruleguard_claimguard_visualguard():
         "RuleGuard",
         "ClaimGuard_Baseline",
         "VisualGuard_Baseline",
+        "VoiceGuard_Baseline"
     }
 
 

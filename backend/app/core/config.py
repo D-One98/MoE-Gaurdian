@@ -20,6 +20,15 @@ class Settings:
     max_image_pixels: int = field(
         default_factory=lambda: int(os.getenv("MAX_IMAGE_PIXELS", str(16_000_000)))
     )
+    max_pdf_upload_bytes: int = field(
+        default_factory=lambda: int(os.getenv("MAX_PDF_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+    )
+    max_pdf_pages: int = field(
+        default_factory=lambda: int(os.getenv("MAX_PDF_PAGES", "50"))
+    )
+    max_csv_upload_bytes: int = field(
+        default_factory=lambda: int(os.getenv("MAX_CSV_UPLOAD_BYTES", str(5 * 1024 * 1024)))
+    )
     cors_origins: List[str] = field(
         default_factory=lambda: [
             origin.strip()

@@ -86,3 +86,40 @@ Returns 400 Bad Request if approving a draft with non-SUPPORTED findings without
 ## 2. Remaining Work for Subsequent Sessions
 * **Session 3 (Frontend & End-to-End User Workflow):** Connect `frontend/` UI to the Session 2 backend endpoints (`GET /api/demo/workspace`, `GET/POST /api/brand/rules`, `GET/POST /api/brand/facts`, `POST /api/audits`, `POST /api/audits/{audit_id}/review`).
 * **Session 4 (Deployment & Hardening):** Public cloud deployment (Vercel + Render/Railway) and Round 2 submission package verification.
+
+{
+  "batch_id": "BATCH-9A2F4C11",
+  "org_id": "ORG-SAMPLE-DEMO-01",
+  "document_id": "DOC-PDF-9A2F4C11",
+  "document_name": "Enterprise_Brand_Guidelines.pdf",
+  "status": "PENDING_CONFIRMATION",
+  "page_count": 2,
+  "extraction_status": "OK",
+  "prompt_shield_isolated": true,
+  "pages": [
+    {
+      "page_number": 1,
+      "char_count": 148,
+      "extracted_text": "Never use 'guaranteed' in marketing copy. Always write brand name as AURORAGEAR.",
+      "prompt_injection_signals_detected": false
+    }
+  ],
+  "candidate_rules": [
+    {
+      "rule_id": "RULE-PDF-P1-001",
+      "category": "BANNED_TERM",
+      "title": "Extracted Banned Term: 'guaranteed'",
+      "description": "Never use 'guaranteed' in marketing copy.",
+      "mandatory_flag": true,
+      "severity": "HIGH",
+      "pattern_or_target": "guaranteed",
+      "expected_replacement": null,
+      "document_id": "DOC-PDF-9A2F4C11",
+      "document_name": "Enterprise_Brand_Guidelines.pdf",
+      "verified_page_or_row": 1,
+      "version": "1.0",
+      "campaign_scope": "GLOBAL"
+    }
+  ],
+  "warnings": []
+}

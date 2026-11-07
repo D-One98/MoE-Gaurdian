@@ -1,11 +1,15 @@
 import json
-from typing import List, Optional
+import uuid
+from datetime import datetime, timezone
+from typing import List, Optional, Dict, Any
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.models.orm_models import (
     BrandRuleModel,
     ApprovedFactModel,
+    BrandPaletteModel,
+    BrandIngestionBatchModel,
     AuditRecordModel,
     AuditFindingModel,
     ReviewSnapshotModel,
@@ -15,6 +19,9 @@ from app.schemas.contracts import (
     RuleCategory,
     Severity,
     ApprovedFact,
+    BrandPaletteItem,
+    ExtractedPageMetadata,
+    GuidelineUploadPreviewResponse,
     AuditResponse,
     AuditStatus,
     DemoRole,
@@ -33,6 +40,7 @@ from app.services.seed_data import (
     DEMO_ORG_ID,
     get_demo_brand_rules,
     get_demo_approved_facts,
+    get_demo_brand_palette,
 )
 
 GENESIS_HMAC = "GENESIS_SNAPSHOT_0000000000000000"
@@ -48,10 +56,20 @@ class GovernanceRepository:
         self.org_id = org_id
 
     def ensure_demo_seed_data(self) -> None:
+        """
+        Seeds fictional AURORAGEAR demo data ONLY for DEMO_ORG_ID.
+        Never seeds or leaks demo records into other tenant organisations.
+        """
+        if self.org_id != DEMO_ORG_ID:
+            return
+
         try:
             for rule in get_demo_brand_rules():
                 exists = self.db.execute(
-                    select(BrandRuleModel).where(BrandRuleModel.rule_id == rule.rule_id)
+                    select(BrandRuleModel).where(
+                        BrandRuleModel.org_id == self.org_id,
+                        BrandRuleModel.rule_id == rule.rule_id,
+                    )
                 ).scalar_one_or_none()
                 if exists is None:
                     self.db.add(
@@ -78,7 +96,10 @@ class GovernanceRepository:
 
             for fact in get_demo_approved_facts():
                 exists = self.db.execute(
-                    select(ApprovedFactModel).where(ApprovedFactModel.fact_id == fact.fact_id)
+                    select(ApprovedFactModel).where(
+                        ApprovedFactModel.org_id == self.org_id,
+                        ApprovedFactModel.fact_id == fact.fact_id,
+                    )
                 ).scalar_one_or_none()
                 if exists is None:
                     self.db.add(
@@ -97,6 +118,29 @@ class GovernanceRepository:
                             document_name=fact.document_name,
                             verified_page_or_row=fact.verified_page_or_row,
                             version=fact.version,
+                            is_custom=False,
+                        )
+                    )
+
+            for pal in get_demo_brand_palette():
+                exists = self.db.execute(
+                    select(BrandPaletteModel).where(
+                        BrandPaletteModel.org_id == self.org_id,
+                        BrandPaletteModel.palette_id == pal["palette_id"],
+                    )
+                ).scalar_one_or_none()
+                if exists is None:
+                    self.db.add(
+                        BrandPaletteModel(
+                            palette_id=pal["palette_id"],
+                            org_id=self.org_id,
+                            name=pal["name"],
+                            hex_code=pal["hex"],
+                            max_delta_e=pal["max_delta_e"],
+                            document_id=pal["document_id"],
+                            document_name=pal["document_name"],
+                            verified_page_or_row=pal["verified_page_or_row"],
+                            version="1.0",
                             is_custom=False,
                         )
                     )
@@ -143,6 +187,24 @@ class GovernanceRepository:
             version=m.version,
         )
 
+    @staticmethod
+    def _to_palette_schema(m: BrandPaletteModel) -> BrandPaletteItem:
+        return BrandPaletteItem(
+            palette_id=m.palette_id,
+            name=m.name,
+            hex=m.hex_code,
+            max_delta_e=m.max_delta_e,
+            document_id=m.document_id,
+            document_name=m.document_name,
+            verified_page_or_row=m.verified_page_or_row,
+            version=m.version,
+        )
+
+    @staticmethod
+    def _hex_to_rgb_tuple(hex_code: str):
+        h = hex_code.lstrip("#")
+        return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
     def list_rules(self) -> List[BrandRule]:
         self.ensure_demo_seed_data()
         rows = (
@@ -159,10 +221,15 @@ class GovernanceRepository:
     def create_rule(self, rule: BrandRule) -> BrandRule:
         self.ensure_demo_seed_data()
         existing = self.db.execute(
-            select(BrandRuleModel).where(BrandRuleModel.rule_id == rule.rule_id)
+            select(BrandRuleModel).where(
+                BrandRuleModel.org_id == self.org_id,
+                BrandRuleModel.rule_id == rule.rule_id,
+            )
         ).scalar_one_or_none()
         if existing is not None:
-            raise DuplicateResourceError(f"Brand rule with rule_id '{rule.rule_id}' already exists.")
+            raise DuplicateResourceError(
+                f"Brand rule with rule_id '{rule.rule_id}' already exists in organisation '{self.org_id}'."
+            )
 
         model = BrandRuleModel(
             rule_id=rule.rule_id,
@@ -211,10 +278,15 @@ class GovernanceRepository:
     def create_fact(self, fact: ApprovedFact) -> ApprovedFact:
         self.ensure_demo_seed_data()
         existing = self.db.execute(
-            select(ApprovedFactModel).where(ApprovedFactModel.fact_id == fact.fact_id)
+            select(ApprovedFactModel).where(
+                ApprovedFactModel.org_id == self.org_id,
+                ApprovedFactModel.fact_id == fact.fact_id,
+            )
         ).scalar_one_or_none()
         if existing is not None:
-            raise DuplicateResourceError(f"Approved fact with fact_id '{fact.fact_id}' already exists.")
+            raise DuplicateResourceError(
+                f"Approved fact with fact_id '{fact.fact_id}' already exists in organisation '{self.org_id}'."
+            )
 
         model = ApprovedFactModel(
             fact_id=fact.fact_id,
@@ -241,6 +313,184 @@ class GovernanceRepository:
         except IntegrityError as exc:
             self.db.rollback()
             raise DuplicateResourceError(f"Duplicate fact_id '{fact.fact_id}'.") from exc
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def list_palettes(self) -> List[BrandPaletteItem]:
+        self.ensure_demo_seed_data()
+        rows = (
+            self.db.execute(
+                select(BrandPaletteModel)
+                .where(BrandPaletteModel.org_id == self.org_id)
+                .order_by(BrandPaletteModel.id.asc())
+            )
+            .scalars()
+            .all()
+        )
+        return [self._to_palette_schema(p) for p in rows]
+
+    def list_palettes_for_visual_guard(self) -> List[Dict[str, Any]]:
+        items = self.list_palettes()
+        return [
+            {
+                "palette_id": item.palette_id,
+                "name": item.name,
+                "hex": item.hex,
+                "rgb": self._hex_to_rgb_tuple(item.hex),
+                "max_delta_e": item.max_delta_e,
+                "document_id": item.document_id,
+                "document_name": item.document_name,
+                "verified_page_or_row": item.verified_page_or_row,
+            }
+            for item in items
+        ]
+
+    def create_palette_item(self, item: BrandPaletteItem) -> BrandPaletteItem:
+        self.ensure_demo_seed_data()
+        existing = self.db.execute(
+            select(BrandPaletteModel).where(
+                BrandPaletteModel.org_id == self.org_id,
+                BrandPaletteModel.palette_id == item.palette_id,
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            raise DuplicateResourceError(
+                f"Brand palette item '{item.palette_id}' already exists in organisation '{self.org_id}'."
+            )
+
+        model = BrandPaletteModel(
+            palette_id=item.palette_id,
+            org_id=self.org_id,
+            name=item.name,
+            hex_code=item.hex,
+            max_delta_e=item.max_delta_e,
+            document_id=item.document_id,
+            document_name=item.document_name,
+            verified_page_or_row=item.verified_page_or_row,
+            version=item.version,
+            is_custom=True,
+        )
+        try:
+            self.db.add(model)
+            self.db.commit()
+            self.db.refresh(model)
+            return self._to_palette_schema(model)
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise DuplicateResourceError(f"Duplicate palette_id '{item.palette_id}'.") from exc
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def create_ingestion_preview_batch(
+        self,
+        document_id: str,
+        document_name: str,
+        page_count: int,
+        extraction_status: str,
+        pages: List[ExtractedPageMetadata],
+        candidate_rules: List[BrandRule],
+        warnings: List[str],
+    ) -> GuidelineUploadPreviewResponse:
+        batch_id = f"BATCH-{uuid.uuid4().hex[:8].upper()}"
+        model = BrandIngestionBatchModel(
+            batch_id=batch_id,
+            org_id=self.org_id,
+            document_id=document_id,
+            document_name=document_name,
+            status="PENDING_CONFIRMATION",
+            page_count=page_count,
+            extraction_status=extraction_status,
+            pages_json=json.dumps([p.model_dump(mode="json") for p in pages]),
+            candidate_rules_json=json.dumps([r.model_dump(mode="json") for r in candidate_rules]),
+            warnings_json=json.dumps(warnings),
+        )
+        try:
+            self.db.add(model)
+            self.db.commit()
+            self.db.refresh(model)
+            return GuidelineUploadPreviewResponse(
+                batch_id=model.batch_id,
+                org_id=model.org_id,
+                document_id=model.document_id,
+                document_name=model.document_name,
+                status=model.status,
+                page_count=model.page_count,
+                extraction_status=model.extraction_status,
+                prompt_shield_isolated=True,
+                pages=pages,
+                candidate_rules=candidate_rules,
+                warnings=warnings,
+            )
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def confirm_ingestion_batch(
+        self,
+        batch_id: str,
+        confirmed_rules: List[BrandRule],
+        version: str = "1.0",
+    ) -> List[BrandRule]:
+        batch = self.db.execute(
+            select(BrandIngestionBatchModel).where(
+                BrandIngestionBatchModel.batch_id == batch_id,
+                BrandIngestionBatchModel.org_id == self.org_id,
+            )
+        ).scalar_one_or_none()
+        if batch is None:
+            raise KeyError(f"Ingestion preview batch '{batch_id}' not found for organisation '{self.org_id}'.")
+
+        if batch.status == "CONFIRMED":
+            raise ValueError(f"Ingestion preview batch '{batch_id}' has already been confirmed.")
+
+        # Check for duplicates before inserting
+        seen_ids: set[str] = set()
+        for rule in confirmed_rules:
+            if rule.rule_id in seen_ids:
+                raise DuplicateResourceError(f"Duplicate rule_id '{rule.rule_id}' in confirmation payload.")
+            seen_ids.add(rule.rule_id)
+            existing = self.db.execute(
+                select(BrandRuleModel).where(
+                    BrandRuleModel.org_id == self.org_id,
+                    BrandRuleModel.rule_id == rule.rule_id,
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                raise DuplicateResourceError(
+                    f"Brand rule '{rule.rule_id}' already exists in organisation '{self.org_id}'."
+                )
+
+        persisted: List[BrandRule] = []
+        try:
+            for rule in confirmed_rules:
+                model = BrandRuleModel(
+                    rule_id=rule.rule_id,
+                    org_id=self.org_id,
+                    category=rule.category.value,
+                    title=rule.title,
+                    description=rule.description,
+                    mandatory_flag=rule.mandatory_flag,
+                    severity=rule.severity.value,
+                    pattern_or_target=rule.pattern_or_target,
+                    expected_replacement=rule.expected_replacement,
+                    numeric_max=rule.numeric_max,
+                    numeric_unit=rule.numeric_unit,
+                    document_id=rule.document_id or batch.document_id,
+                    document_name=rule.document_name or batch.document_name,
+                    verified_page_or_row=rule.verified_page_or_row,
+                    version=version or rule.version,
+                    campaign_scope=rule.campaign_scope,
+                    is_custom=True,
+                )
+                self.db.add(model)
+                persisted.append(self._to_brand_rule_schema(model))
+
+            batch.status = "CONFIRMED"
+            batch.confirmed_at_utc = datetime.now(timezone.utc).isoformat()
+            self.db.commit()
+            return persisted
         except Exception:
             self.db.rollback()
             raise

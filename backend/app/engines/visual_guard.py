@@ -154,6 +154,7 @@ def _rgb_to_hex(rgb: Tuple[int, int, int]) -> str:
 def run_visual_guard_baseline(
     visual_asset: Optional[VisualAssetInput],
     fallback_alt_text: Optional[str] = None,
+    brand_palette: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[List[UnifiedFinding], EngineExecutionRecord]:
     if visual_asset is None:
         return [], EngineExecutionRecord(
@@ -341,7 +342,7 @@ def run_visual_guard_baseline(
         finding_counter += 1
 
     # 6. Extract dominant colours & compare against brand palette via CIEDE2000 Delta E
-    palette = get_demo_brand_palette()
+    palette = brand_palette if brand_palette is not None else get_demo_brand_palette()
     overall_engine_state = ExecutionState.OK
 
     if colors is None:
@@ -370,18 +371,35 @@ def run_visual_guard_baseline(
         )
         finding_counter += 1
     else:
+        
         sorted_colors = sorted(colors, key=lambda item: item[0], reverse=True)
-        if sorted_colors:
-            _, dom_rgb = sorted_colors[0]
+
+        if sorted_colors and palette:
+            highest_frequency = sorted_colors[0][0]
+            top_colors = [
+                rgb
+                for count, rgb in sorted_colors
+                if count == highest_frequency
+            ]
+
+            dom_rgb = min(
+                top_colors,
+                key=lambda candidate: min(
+                    compute_ciede2000_delta_e(candidate, pal["rgb"])
+                    for pal in palette
+                ),
+            )
+
             dom_hex = _rgb_to_hex(dom_rgb)
             best_match: Optional[Dict[str, Any]] = None
             min_delta_e = float("inf")
+
             for pal in palette:
                 de = compute_ciede2000_delta_e(dom_rgb, pal["rgb"])
                 if de < min_delta_e:
                     min_delta_e = de
                     best_match = pal
-
+                    
             assert best_match is not None
             if min_delta_e > best_match["max_delta_e"]:
                 findings.append(

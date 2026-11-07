@@ -13,7 +13,7 @@ class BrandRuleModel(Base):
     __tablename__ = "brand_rules"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    rule_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    rule_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     org_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     category: Mapped[str] = mapped_column(String(64), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -37,7 +37,7 @@ class ApprovedFactModel(Base):
     __tablename__ = "approved_facts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    fact_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    fact_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     org_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     topic_key: Mapped[str] = mapped_column(String(128), nullable=False)
     subject_keywords_json: Mapped[str] = mapped_column(Text, nullable=False)
@@ -53,6 +53,41 @@ class ApprovedFactModel(Base):
     version: Mapped[str] = mapped_column(String(32), default="1.0", nullable=False)
     is_custom: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at_utc: Mapped[str] = mapped_column(String(64), default=_utc_now_iso, nullable=False)
+
+
+class BrandPaletteModel(Base):
+    __tablename__ = "brand_palettes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    palette_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    org_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    hex_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    max_delta_e: Mapped[float] = mapped_column(Float, default=15.0, nullable=False)
+    document_id: Mapped[str] = mapped_column(String(128), default="DOC-BRAND-CONSTITUTION-V1", nullable=False)
+    document_name: Mapped[str] = mapped_column(String(255), default="Sample_Brand_Guidelines_v1.pdf", nullable=False)
+    verified_page_or_row: Mapped[int] = mapped_column(Integer, default=6, nullable=False)
+    version: Mapped[str] = mapped_column(String(32), default="1.0", nullable=False)
+    is_custom: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at_utc: Mapped[str] = mapped_column(String(64), default=_utc_now_iso, nullable=False)
+
+
+class BrandIngestionBatchModel(Base):
+    __tablename__ = "brand_ingestion_batches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    org_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    document_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    document_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="PENDING_CONFIRMATION", nullable=False)
+    page_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    extraction_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    pages_json: Mapped[str] = mapped_column(Text, nullable=False)
+    candidate_rules_json: Mapped[str] = mapped_column(Text, nullable=False)
+    warnings_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at_utc: Mapped[str] = mapped_column(String(64), default=_utc_now_iso, nullable=False)
+    confirmed_at_utc: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
 
 class AuditRecordModel(Base):
@@ -140,4 +175,7 @@ class ReviewSnapshotModel(Base):
     audit: Mapped["AuditRecordModel"] = relationship("AuditRecordModel", back_populates="snapshots")
 
 
+Index("ix_brand_rules_org_rule", BrandRuleModel.org_id, BrandRuleModel.rule_id, unique=True)
+Index("ix_approved_facts_org_fact", ApprovedFactModel.org_id, ApprovedFactModel.fact_id, unique=True)
+Index("ix_brand_palettes_org_palette", BrandPaletteModel.org_id, BrandPaletteModel.palette_id, unique=True)
 Index("ix_audit_findings_audit_finding", AuditFindingModel.audit_id, AuditFindingModel.finding_id, unique=True)

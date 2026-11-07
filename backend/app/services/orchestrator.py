@@ -21,6 +21,8 @@ from app.schemas.contracts import (
     UnifiedFinding,
     VerificationStatus,
     VisualAssetInput,
+    OnDemandRewriteRequest, 
+    OnDemandRewriteResponse
 )
 
 from app.services.seed_data import DEMO_ORG_ID
@@ -29,6 +31,7 @@ from app.repositories.governance_repo import GovernanceRepository
 from app.engines.rule_guard import run_rule_guard
 from app.engines.claim_guard import run_claim_guard_baseline
 from app.engines.visual_guard import run_visual_guard_baseline
+from app.engines.voice_guard import run_voice_guard_baseline, generate_on_demand_rewrite_candidates
 from app.services.privacy_gate import apply_baseline_privacy_gate
 
 ALLOWED_REVIEW_SOURCE_STATES = {
@@ -158,13 +161,65 @@ class VerityMoEOrchestrator:
         except (AttributeError, TypeError, ValueError, KeyError):
             return False
 
-    def run_audit(
+    def request_on_demand_rewrite(
         self,
         db: Session,
-        request: AuditCreateRequest,
-    ) -> AuditResponse:
+        audit_id: str,
+        finding_id: str,
+        payload: OnDemandRewriteRequest,
+        org_id: str = DEMO_ORG_ID,
+    ) -> OnDemandRewriteResponse:
+        repo = GovernanceRepository(db, org_id=org_id)
+        audit = repo.get_audit(audit_id)
+        if not audit:
+            raise KeyError(f"Audit '{audit_id}' not found in organisation '{org_id}'.")
 
-        repo = GovernanceRepository(db, org_id=DEMO_ORG_ID)
+        target_finding = next(
+            (f for f in audit.findings if f.finding_id == finding_id),
+            None,
+        )
+        if target_finding is None:
+            raise KeyError(f"Finding '{finding_id}' not found in audit '{audit_id}'.")
+
+        target_block = next(
+            (b for b in audit.blocks if b.document_block_id == target_finding.document_block_id),
+            audit.blocks[0],
+        )
+
+        rules = repo.list_rules()
+        facts = repo.list_facts()
+
+        mandatory_rules = [r for r in rules if r.mandatory_flag]
+        active_rules = mandatory_rules + [r for r in rules if not r.mandatory_flag]
+
+        candidates = generate_on_demand_rewrite_candidates(
+            block_text=target_block.text,
+            finding=target_finding,
+            rules=active_rules,
+            facts=facts,
+            custom_candidate_text=payload.custom_candidate_text,
+        )
+
+        primary = next(
+            (c for c in candidates if c.backend_revalidation.revalidation_passed),
+            None,
+        )
+
+        return OnDemandRewriteResponse(
+            audit_id=audit.audit_id,
+            org_id=audit.org_id,
+            finding_id=target_finding.finding_id,
+            original_matched_text=target_finding.matched_text or target_block.text,
+            original_finding_type=target_finding.finding_type,
+            original_verification_status=target_finding.verification_status,
+            rewrite_candidates=candidates,
+            selected_primary_candidate=primary,
+        )
+    
+    def run_audit(self, db: Session, request: AuditCreateRequest, org_id: str = DEMO_ORG_ID) -> AuditResponse:
+
+        repo = GovernanceRepository(db, org_id=org_id)
+        palettes = repo.list_palettes_for_visual_guard()
 
         # Load persisted brand rules and approved facts
         rules = repo.list_rules()
@@ -192,20 +247,27 @@ class VerityMoEOrchestrator:
         )
 
         vg_findings, vg_exec = run_visual_guard_baseline(
-            request.visual_asset,
-            fallback_alt_text=request.alt_text,
+            request.visual_asset, 
+            fallback_alt_text=request.alt_text, 
+            brand_palette=palettes
+        )
+        
+        voice_findings, voice_exec = run_voice_guard_baseline(
+            request.blocks,
+            active_rules,
         )
 
         all_findings: List[UnifiedFinding] = (
-            rg_findings + cg_findings + vg_findings
+            rg_findings + cg_findings + vg_findings + voice_findings
         )
 
         engine_executions = [
             rg_exec,
             cg_exec,
             vg_exec,
+            voice_exec,
         ]
-
+        
         # Execute real baseline regex privacy gate inspection
         privacy_report = apply_baseline_privacy_gate(request.blocks)
 
@@ -271,13 +333,14 @@ class VerityMoEOrchestrator:
         executed_engines = [
             "RuleGuard",
             "ClaimGuard_Baseline",
+            "VoiceGuard_Baseline"
         ]
         if vg_exec.execution_state != ExecutionState.NOT_APPLICABLE:
             executed_engines.append("VisualGuard_Baseline")
 
         response = AuditResponse(
             audit_id=audit_id,
-            org_id=DEMO_ORG_ID,
+            org_id=org_id,
             campaign_id=request.campaign_id,
             submitted_by_role=request.submitted_by_role,
             document_revision_hash=doc_rev_hash,
@@ -303,31 +366,20 @@ class VerityMoEOrchestrator:
         # Persist audit and findings in database
         return repo.save_audit(response)
 
-    def get_audit(
-        self,
-        db: Session,
-        audit_id: str,
-    ) -> Optional[AuditResponse]:
+    def get_audit(self, db: Session, audit_id: str, org_id: str = DEMO_ORG_ID) -> Optional[AuditResponse]:
 
         repo = GovernanceRepository(
             db,
-            org_id=DEMO_ORG_ID,
+            org_id=org_id,
         )
 
         return repo.get_audit(audit_id)
 
-    def record_review_decision(
-        self,
-        db: Session,
-        audit_id: str,
-        actor_role: DemoRole,
-        decision: str,
-        override_justification: Optional[str] = None,
-    ) -> AuditResponse:
+    def record_review_decision(self, db: Session, audit_id: str, actor_role: DemoRole, decision: str, override_justification: Optional[str] = None, org_id: str = DEMO_ORG_ID) -> AuditResponse:
 
         repo = GovernanceRepository(
             db,
-            org_id=DEMO_ORG_ID,
+            org_id=org_id,
         )
 
         audit = repo.get_audit(audit_id)

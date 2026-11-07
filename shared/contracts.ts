@@ -196,3 +196,72 @@ export interface VisualAssetInput {
   declared_foreground_hex?: string | null;
   declared_background_hex?: string | null;
 }
+
+export interface BrandPaletteItem {
+  palette_id: string;
+  name: string;
+  hex: string;
+  max_delta_e?: number;
+  document_id?: string;
+  document_name?: string;
+  verified_page_or_row?: number;
+  version?: string;
+}
+
+export interface ExtractedPageMetadata {
+  page_number: number;
+  char_count: number;
+  extracted_text: string;
+  prompt_injection_signals_detected: boolean;
+}
+
+export interface GuidelineUploadPreviewResponse {
+  batch_id: string;
+  org_id: string;
+  document_id: string;
+  document_name: string;
+  status: "PENDING_CONFIRMATION" | "CONFIRMED" | string;
+  page_count: number;
+  extraction_status: "OK" | "IMAGE_ONLY_OR_SCANNED_UNSUPPORTED" | string;
+  prompt_shield_isolated: boolean;
+  pages: ExtractedPageMetadata[];
+  candidate_rules: BrandRule[];
+  warnings: string[];
+}
+
+export interface GuidelineConfirmRequest {
+  brand_constitution_version?: string;
+  confirmed_rules: BrandRule[];
+}
+
+export interface CsvRowError {
+  row_number: number;
+  fact_id: string | null;
+  error_code: string;
+  message: string;
+}
+
+export interface CsvFactsUploadResponse {
+  org_id: string;
+  document_name: string;
+  total_rows_processed: number;
+  saved_facts_count: number;
+  saved_facts: ApprovedFact[];
+  row_errors: CsvRowError[];
+}
+
+export interface OnDemandRewriteRequest {
+  custom_candidate_text?: string | null;
+  preserve_tone_notes?: string | null;
+}
+
+export interface OnDemandRewriteResponse {
+  audit_id: string;
+  org_id: string;
+  finding_id: string;
+  original_matched_text: string;
+  original_finding_type: FindingType;
+  original_verification_status: VerificationStatus;
+  rewrite_candidates: RewriteCandidate[];
+  selected_primary_candidate: RewriteCandidate | null;
+}
