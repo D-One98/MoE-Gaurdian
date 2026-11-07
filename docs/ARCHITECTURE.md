@@ -20,3 +20,19 @@
 ## 3. LLM Boundary & Security Limitations
 * **LLM Boundary (`backend/app/services/llm_adapter.py`):** Isolated behind `LLMProviderAdapter` (defaults to `NullDeterministicAdapter`). Local execution requires zero external API keys, and a failed/unconfigured LLM never produces a `SUPPORTED` claim.
 * **Current Security Scope:** Public demo endpoints use non-sensitive fictional sample data (`AURORAGEAR`). Role selection in the demo workspace is a simulation for frictionless judge testing; server-side state validation enforces Maker-Checker separation.
+
+## 4. SQLAlchemy 2.x Persistence Architecture
+* **Database Engine (`backend/app/core/database.py`):** Supports local SQLite (`sqlite:///./moe_guardian_dev.db` with `PRAGMA foreign_keys=ON`) by default and PostgreSQL via `DATABASE_URL`. Connections are initialized lazily on demand rather than at module import time.
+* **Typed ORM Models (`backend/app/models/orm_models.py`):**
+  1. `BrandRuleModel` (`brand_rules`): Stores seeded and custom brand constitution rules (`rule_id` unique, indexed by `org_id`).
+  2. `ApprovedFactModel` (`approved_facts`): Stores seeded and custom approved facts (`fact_id` unique, indexed by `org_id`).
+  3. `AuditRecordModel` (`audit_records`): Stores audit metadata, submitted blocks, engine execution records, and AI disclosure logs, with one-to-many cascading relationships to findings and review snapshots.
+  4. `AuditFindingModel` (`audit_findings`): Normalized persistence of every `UnifiedFinding` linked via foreign key (`audit_records.audit_id`, `ondelete="CASCADE"`).
+  5. `ReviewSnapshotModel` (`review_snapshots`): Persists signed review decisions and chained `HMAC-SHA256` signatures (`previous_snapshot_hmac`).
+* **Repository Layer (`backend/app/repositories/governance_repo.py`):** Separates SQLAlchemy persistence and transaction rollback handling from FastAPI route handlers and `VerityMoEOrchestrator`. Seeds fictional `AURORAGEAR` demo rules and facts idempotently without overwriting administrator-created records.
+
+## 5. Specialist Engines & Orchestration Flow
+1. **`RuleGuard` (`backend/app/engines/rule_guard.py`):** Deterministic regex and bound validation for banned terms, exact brand casing (`AURORAGEAR`), mandatory disclaimers, and discount bounds.
+2. **`ClaimGuard` Baseline (`backend/app/engines/claim_guard.py`):** Evaluates promotional/factual claims against `ApprovedFact` records across `SUPPORTED`, `PARTIAL`, `CONTRADICTED`, and `UNVERIFIABLE` states, paired with the fail-closed Rewrite Validation Coordinator.
+3. **`VisualGuard` Baseline (`backend/app/engines/visual_guard.py`):** Validates static PNG and JPG/JPEG creatives in memory (MIME + Pillow header match, 5 MB size cap, 16 MP decompression-bomb guard), compares dominant colours against the brand palette using **CIEDE2000 ($\Delta E$)**, checks `alt_text` metadata presence, and computes **WCAG 2.1 relative-luminance contrast** only when foreground/background colours are reliably known (returning `INSUFFICIENT_DATA` otherwise).
+4. **Fail-Closed Orchestration & HMAC Chaining (`backend/app/services/orchestrator.py`):** Any engine error sets `mandatory_policies_enforced = False` and escalates the audit to `ESCALATED_TO_AUTHORISED_REVIEWER`. Review decisions include `review_notes` inside the canonical JSON payload prior to `HMAC-SHA256` signing and chain against the latest persisted snapshot signature.
