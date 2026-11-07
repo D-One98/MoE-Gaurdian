@@ -259,9 +259,7 @@ def run_visual_guard_baseline(
             notes="Oversized image upload rejected.",
         )
 
-    # 4. Validate actual image format & guard against decompression bombs
-    old_max_pixels = Image.MAX_IMAGE_PIXELS
-    Image.MAX_IMAGE_PIXELS = max_pixels
+    # 4. Validate actual image format & guard against decompression bombs WITHOUT mutating global Image.MAX_IMAGE_PIXELS
     try:
         with Image.open(io.BytesIO(raw_bytes)) as img_verify:
             actual_format = (img_verify.format or "").upper()
@@ -279,9 +277,11 @@ def run_visual_guard_baseline(
             )
 
         with Image.open(io.BytesIO(raw_bytes)) as img:
+            if (img.size[0] * img.size[1]) > max_pixels:
+                raise ValueError("Image pixel count exceeds safety limit.")
             rgb_img = img.convert("RGB")
             total_pixels = width * height
-            colors = rgb_img.getcolors(maxcolors=min(total_pixels + 1, 65536))
+            colors = rgb_img.getcolors(maxcolors=65536)
     except (UnidentifiedImageError, ValueError, OSError, Image.DecompressionBombError) as exc:
         findings.append(
             UnifiedFinding(
@@ -307,8 +307,6 @@ def run_visual_guard_baseline(
             findings_count=len(findings),
             notes=f"Image validation error: {str(exc)}",
         )
-    finally:
-        Image.MAX_IMAGE_PIXELS = old_max_pixels
 
     # 5. Validate meaningful alt_text metadata
     effective_alt = visual_asset.alt_text if visual_asset.alt_text is not None else fallback_alt_text
@@ -344,53 +342,80 @@ def run_visual_guard_baseline(
 
     # 6. Extract dominant colours & compare against brand palette via CIEDE2000 Delta E
     palette = get_demo_brand_palette()
-    sorted_colors = sorted(colors, key=lambda item: item[0], reverse=True) if colors else []
+    overall_engine_state = ExecutionState.OK
 
-    if sorted_colors:
-        _, dom_rgb = sorted_colors[0]
-        dom_hex = _rgb_to_hex(dom_rgb)
-        best_match: Optional[Dict[str, Any]] = None
-        min_delta_e = float("inf")
-        for pal in palette:
-            de = compute_ciede2000_delta_e(dom_rgb, pal["rgb"])
-            if de < min_delta_e:
-                min_delta_e = de
-                best_match = pal
-
-        assert best_match is not None
-        if min_delta_e > best_match["max_delta_e"]:
-            findings.append(
-                UnifiedFinding(
-                    finding_id=f"FND-VG-{finding_counter:04d}",
-                    expert_engine="VisualGuard",
-                    execution_state=ExecutionState.OK,
-                    finding_type=FindingType.VISUAL_A11Y_SUBSET,
-                    severity=Severity.MEDIUM,
-                    verification_status=VerificationStatus.NOT_CLAIM_APPLICABLE,
-                    document_block_id=block_id,
-                    matched_text=dom_hex,
-                    anchor_resolution_status=AnchorResolutionStatus.UNRESOLVED_SIDEBAR_ONLY,
-                    explanation=(
-                        f"Dominant image colour {dom_hex} deviates from closest approved brand palette colour "
-                        f"{best_match['name']} ({best_match['hex']}) with CIEDE2000 ΔE = {min_delta_e} "
-                        f"(maximum allowed ΔE = {best_match['max_delta_e']})."
-                    ),
-                    evidence_reference=EvidenceReference(
-                        source_type="BRAND_PALETTE",
-                        reference_id=best_match["palette_id"],
-                        document_id=best_match["document_id"],
-                        document_name=best_match["document_name"],
-                        verified_page_or_row=best_match["verified_page_or_row"],
-                        canonical_excerpt_from_db=(
-                            f"Approved palette colour {best_match['name']} ({best_match['hex']}), "
-                            f"maximum perceptual distance CIEDE2000 ΔE <= {best_match['max_delta_e']}."
-                        ),
-                    ),
-                    rewrite_candidate=None,
-                    human_review_required=True,
-                )
+    if colors is None:
+        # High-colour image (> 65,536 unique colours) -> explicitly report INSUFFICIENT_DATA instead of silently skipping
+        overall_engine_state = ExecutionState.INSUFFICIENT_DATA
+        sorted_colors = []
+        findings.append(
+            UnifiedFinding(
+                finding_id=f"FND-VG-{finding_counter:04d}",
+                expert_engine="VisualGuard",
+                execution_state=ExecutionState.INSUFFICIENT_DATA,
+                finding_type=FindingType.VISUAL_A11Y_SUBSET,
+                severity=Severity.LOW,
+                verification_status=VerificationStatus.NOT_CLAIM_APPLICABLE,
+                document_block_id=block_id,
+                matched_text=visual_asset.filename,
+                anchor_resolution_status=AnchorResolutionStatus.UNRESOLVED_SIDEBAR_ONLY,
+                explanation=(
+                    "Image contains more than 65,536 unique colours (complex photograph or continuous gradient). "
+                    "Exact dominant-colour palette comparison marked INSUFFICIENT_DATA for human visual review."
+                ),
+                evidence_reference=None,
+                rewrite_candidate=None,
+                human_review_required=True,
             )
-            finding_counter += 1
+        )
+        finding_counter += 1
+    else:
+        sorted_colors = sorted(colors, key=lambda item: item[0], reverse=True)
+        if sorted_colors:
+            _, dom_rgb = sorted_colors[0]
+            dom_hex = _rgb_to_hex(dom_rgb)
+            best_match: Optional[Dict[str, Any]] = None
+            min_delta_e = float("inf")
+            for pal in palette:
+                de = compute_ciede2000_delta_e(dom_rgb, pal["rgb"])
+                if de < min_delta_e:
+                    min_delta_e = de
+                    best_match = pal
+
+            assert best_match is not None
+            if min_delta_e > best_match["max_delta_e"]:
+                findings.append(
+                    UnifiedFinding(
+                        finding_id=f"FND-VG-{finding_counter:04d}",
+                        expert_engine="VisualGuard",
+                        execution_state=ExecutionState.OK,
+                        finding_type=FindingType.VISUAL_A11Y_SUBSET,
+                        severity=Severity.MEDIUM,
+                        verification_status=VerificationStatus.NOT_CLAIM_APPLICABLE,
+                        document_block_id=block_id,
+                        matched_text=dom_hex,
+                        anchor_resolution_status=AnchorResolutionStatus.UNRESOLVED_SIDEBAR_ONLY,
+                        explanation=(
+                            f"Dominant image colour {dom_hex} deviates from closest approved brand palette colour "
+                            f"{best_match['name']} ({best_match['hex']}) with CIEDE2000 ΔE = {min_delta_e} "
+                            f"(maximum allowed ΔE = {best_match['max_delta_e']})."
+                        ),
+                        evidence_reference=EvidenceReference(
+                            source_type="BRAND_PALETTE",
+                            reference_id=best_match["palette_id"],
+                            document_id=best_match["document_id"],
+                            document_name=best_match["document_name"],
+                            verified_page_or_row=best_match["verified_page_or_row"],
+                            canonical_excerpt_from_db=(
+                                f"Approved palette colour {best_match['name']} ({best_match['hex']}), "
+                                f"maximum perceptual distance CIEDE2000 ΔE <= {best_match['max_delta_e']}."
+                            ),
+                        ),
+                        rewrite_candidate=None,
+                        human_review_required=True,
+                    )
+                )
+                finding_counter += 1
 
     # 7. WCAG Relative-Luminance Contrast Check (Only when fg/bg colours are reliably known)
     fg_rgb = _parse_hex_color(visual_asset.declared_foreground_hex)
@@ -403,8 +428,6 @@ def run_visual_guard_baseline(
             if top_two_ratio >= 0.90 and sorted_colors[0][1] != sorted_colors[1][1]:
                 bg_rgb = sorted_colors[0][1]
                 fg_rgb = sorted_colors[1][1]
-
-    overall_engine_state = ExecutionState.OK
 
     if fg_rgb is not None and bg_rgb is not None:
         contrast_ratio = compute_wcag_contrast_ratio(fg_rgb, bg_rgb)

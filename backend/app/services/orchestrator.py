@@ -29,6 +29,13 @@ from app.repositories.governance_repo import GovernanceRepository
 from app.engines.rule_guard import run_rule_guard
 from app.engines.claim_guard import run_claim_guard_baseline
 from app.engines.visual_guard import run_visual_guard_baseline
+from app.services.privacy_gate import apply_baseline_privacy_gate
+
+ALLOWED_REVIEW_SOURCE_STATES = {
+    AuditStatus.PENDING_REVIEW,
+    AuditStatus.READY_FOR_MANAGER_APPROVAL,
+    AuditStatus.ESCALATED_TO_AUTHORISED_REVIEWER,
+}
 
 
 class VerityMoEOrchestrator:
@@ -199,6 +206,9 @@ class VerityMoEOrchestrator:
             vg_exec,
         ]
 
+        # Execute real baseline regex privacy gate inspection
+        privacy_report = apply_baseline_privacy_gate(request.blocks)
+
         # Fail-closed engine execution check
         any_engine_failed = any(
             execution.execution_state in (
@@ -208,17 +218,14 @@ class VerityMoEOrchestrator:
             for execution in engine_executions
         )
 
-        # Do not claim mandatory policies were enforced if any active engine failed
-        mandatory_policies_enforced = (
-            not any(
-                execution.execution_state == ExecutionState.ERROR
-                for execution in engine_executions
+        #INSUFFICIENT_DATA and ERROR both set mandatory_policies_enforced to False
+        mandatory_policies_enforced = all(
+            execution.mandatory_enforced
+            and execution.execution_state in (
+                ExecutionState.OK,
+                ExecutionState.NOT_APPLICABLE,
             )
-            and all(
-                execution.mandatory_enforced
-                for execution in engine_executions
-                if execution.execution_state != ExecutionState.NOT_APPLICABLE
-            )
+            for execution in engine_executions
         )
 
         # Include finding-level execution failures in risk assessment
@@ -284,7 +291,9 @@ class VerityMoEOrchestrator:
                 "llm_provider": settings.llm_provider,
                 "external_data_shared": False,
                 "deterministic_engines_executed": executed_engines,
-                "privacy_masking_mode": "BASELINE_REGEX_ACTIVE",
+                "privacy_masking_mode": privacy_report["privacy_masking_mode"],
+                "sensitive_matches_masked_count": privacy_report["sensitive_matches_masked_count"],
+                "sensitive_categories_detected": privacy_report["sensitive_categories_detected"],
                 "timestamp_utc": now_utc,
             },
             latest_snapshot=None,
@@ -326,6 +335,13 @@ class VerityMoEOrchestrator:
         if not audit:
             raise KeyError(
                 f"Audit '{audit_id}' not found."
+            )
+        
+        # Issue 5 Fix: Explicit allowed-state transition table enforcement
+        if audit.overall_status not in ALLOWED_REVIEW_SOURCE_STATES:
+            raise ValueError(
+                f"Invalid state transition: Audit '{audit_id}' is already in terminal review state "
+                f"'{audit.overall_status.value}' and cannot be reviewed again without submitting a new draft revision."
             )
 
         # Maker-Checker enforcement

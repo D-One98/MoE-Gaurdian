@@ -195,3 +195,80 @@ def test_request_changes_workflow_creates_signed_snapshot():
     assert data["overall_status"] == "CHANGES_REQUESTED"
     assert data["latest_snapshot"]["approval_state"] == "CHANGES_REQUESTED"
     assert data["latest_snapshot"]["review_notes"] == "Please fix brand casing and remove superlative."
+    
+def test_mandatory_policies_enforced_is_false_when_visualguard_returns_insufficient_data():
+    # Issue 1 regression test: Single-tone image -> INSUFFICIENT_DATA -> mandatory_policies_enforced must be False
+    img = Image.new("RGB", (40, 40), color=(15, 23, 42))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    single_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    resp = client.post(
+        "/api/audits",
+        json={
+            "campaign_id": "CAMP-ISSUE1",
+            "blocks": [{"document_block_id": "b1", "text": "AURORAGEAR workstation."}],
+            "visual_asset": {
+                "filename": "single.png",
+                "mime_type": "image/png",
+                "image_base64": single_b64,
+                "alt_text": "Single tone navy card",
+            },
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["mandatory_policies_enforced"] is False
+    assert data["overall_status"] == "ESCALATED_TO_AUTHORISED_REVIEWER"
+
+
+def test_privacy_gate_detects_and_reports_sensitive_patterns():
+    # Issue 2 regression test: Verify real regex detection for email & phone in ai_disclosure_log
+    resp = client.post(
+        "/api/audits",
+        json={
+            "campaign_id": "CAMP-ISSUE2",
+            "blocks": [
+                {
+                    "document_block_id": "b1",
+                    "text": "Contact AURORAGEAR support at lead@auroragear.example.com or 9876543210.",
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 201
+    log = resp.json()["ai_disclosure_log"]
+    assert log["privacy_masking_mode"] == "BASELINE_REGEX_ACTIVE"
+    assert log["sensitive_matches_masked_count"] >= 2
+    assert "email" in log["sensitive_categories_detected"]
+
+
+def test_review_transition_table_blocks_duplicate_review_on_already_approved_audit():
+    # Issue 5 regression test: Approved audit cannot be reviewed a second time
+    resp = client.post(
+        "/api/audits",
+        json={
+            "campaign_id": "CAMP-ISSUE5",
+            "blocks": [
+                {
+                    "document_block_id": "b1",
+                    "text": "AURORAGEAR provides up to 12 hours of battery life under specified laboratory testing conditions.",
+                }
+            ],
+        },
+    )
+    audit_id = resp.json()["audit_id"]
+
+    first_rev = client.post(
+        f"/api/audits/{audit_id}/review",
+        json={"actor_role": "BRAND_MANAGER", "decision": "APPROVE"},
+    )
+    assert first_rev.status_code == 200
+
+    # Second review attempt on already APPROVED audit must fail with 400 Bad Request
+    second_rev = client.post(
+        f"/api/audits/{audit_id}/review",
+        json={"actor_role": "AUTHORISED_REVIEWER", "decision": "REQUEST_CHANGES", "override_justification": "Late change"},
+    )
+    assert second_rev.status_code == 400
+    assert "terminal review state" in second_rev.json()["detail"]["message"]
