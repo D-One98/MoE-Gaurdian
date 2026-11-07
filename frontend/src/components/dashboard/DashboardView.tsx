@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { AuditResponse, Severity } from '../../types/contracts';
 import type { NavRoute } from '../layout/Sidebar';
 import {
@@ -18,6 +18,8 @@ import {
     Download,
     Clock,
     Layers,
+    Copy,
+    Check,
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -38,6 +40,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     isStale,
     onNavigate,
 }) => {
+    const [copiedHash, setCopiedHash] = useState(false);
+
     // Compute real severity counts from audit.findings (Zero fabricated numbers!)
     const severityCounts = useMemo(() => {
         const counts: Record<Severity, number> = {
@@ -52,6 +56,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         });
         return counts;
     }, [audit.findings]);
+
+    // Copy SHA-256 hash helper
+    const handleCopyHash = () => {
+        navigator.clipboard.writeText(audit.document_revision_hash);
+        setCopiedHash(true);
+        setTimeout(() => setCopiedHash(false), 1800);
+    };
 
     // Export current audit payload as JSON
     const handleExportAuditRecord = () => {
@@ -105,7 +116,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
             </div>
 
-            {/* SECTION 1: Specialist Engine Telemetry Cards (Matches Screenshot Top Grid) */}
+            {/* SECTION 1: Specialist Engine Telemetry Cards (With Hover Lift & Action Prompt) */}
             <div className="space-y-3">
                 <div className="flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-zinc-200 tracking-tight">
@@ -126,7 +137,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         return (
                             <div
                                 key={eng.expert_engine}
-                                className="bg-[#121215] border border-zinc-800/90 rounded-xl p-4 flex flex-col justify-between space-y-4 hover:border-zinc-700/80 transition-colors"
+                                onClick={() => onNavigate('findings')}
+                                className="group bg-[#121215] border border-zinc-800/90 rounded-xl p-4 flex flex-col justify-between space-y-4 hover:border-emerald-500/50 hover:-translate-y-0.5 hover:bg-zinc-900/40 transition-all duration-150 cursor-pointer"
                             >
                                 {/* Card Header */}
                                 <div className="flex items-center justify-between">
@@ -134,11 +146,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                         {ENGINE_ICONS[eng.expert_engine] || (
                                             <Shield className="w-4 h-4 text-zinc-400" />
                                         )}
-                                        <span className="text-xs font-semibold text-zinc-200">
+                                        <span className="text-xs font-semibold text-zinc-200 group-hover:text-white transition-colors">
                                             {eng.expert_engine} —
                                         </span>
                                     </div>
-                                    <MoreHorizontal className="w-4 h-4 text-zinc-600" />
+                                    <MoreHorizontal className="w-4 h-4 text-zinc-600 group-hover:text-emerald-400 transition-colors" />
                                 </div>
 
                                 {/* Metric & Finding Breakdown */}
@@ -181,9 +193,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                     </p>
                                 </div>
 
-                                {/* Execution Health Indicator Bar */}
+                                {/* Execution Health Indicator Bar + Hover Prompt */}
                                 <div className="pt-2 border-t border-zinc-800/70 flex items-center justify-between text-[11px]">
-                                    <span className="text-zinc-500">Execution state</span>
+                                    <span className="text-zinc-500 group-hover:hidden">Execution state</span>
+                                    <span className="hidden group-hover:inline-flex items-center gap-1 text-emerald-400 font-mono text-[10px]">
+                                        Click to inspect findings <ArrowUpRight className="w-3 h-3" />
+                                    </span>
                                     <div className="flex items-center gap-1">
                                         {[1, 2, 3, 4, 5, 6].map((bar) => (
                                             <span
@@ -215,7 +230,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         (sev) => (
                             <div
                                 key={sev}
-                                className="flex items-center gap-2 px-3 py-1 rounded-lg bg-zinc-900/90 border border-zinc-800"
+                                onClick={() => onNavigate('findings')}
+                                className="flex items-center gap-2 px-3 py-1 rounded-lg bg-zinc-900/90 border border-zinc-800 hover:border-zinc-600 transition-colors cursor-pointer"
                             >
                                 <SeverityBadge severity={sev} />
                                 <span className="text-xs font-mono font-bold text-zinc-100">
@@ -237,7 +253,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                 Audit Findings Table
                             </h3>
                             <p className="text-xs text-zinc-500 mt-0.5">
-                                Click any row to inspect PostgreSQL citations and surgical rewrites
+                                Hover and click any row to inspect PostgreSQL citations and surgical rewrites
                             </p>
                         </div>
                         <button
@@ -266,9 +282,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                     <tr
                                         key={finding.finding_id}
                                         onClick={() => onNavigate('findings')}
-                                        className="hover:bg-zinc-900/60 transition-colors cursor-pointer"
+                                        className="group hover:bg-zinc-900/80 transition-colors cursor-pointer"
                                     >
-                                        <td className="py-3.5 px-4 font-mono text-zinc-200 whitespace-nowrap">
+                                        <td className="py-3.5 px-4 font-mono text-zinc-200 whitespace-nowrap group-hover:text-emerald-400 transition-colors">
                                             {finding.finding_id}
                                         </td>
                                         <td className="py-3.5 px-3 font-medium text-zinc-300 whitespace-nowrap">
@@ -286,9 +302,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                                 executionState={finding.execution_state}
                                             />
                                         </td>
-                                        <td className="py-3.5 px-4 max-w-xs">
-                                            <div className="font-semibold text-zinc-100 truncate">
-                                                {finding.matched_text || '[Document / Image Region]'}
+                                        <td className="py-3.5 px-4 max-w-xs relative">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div className="font-semibold text-zinc-100 truncate">
+                                                    {finding.matched_text || '[Document / Image Region]'}
+                                                </div>
+                                                {/* Hover Action Pill (Matches Preview Image!) */}
+                                                <span className="opacity-0 group-hover:opacity-100 transition-opacity px-2 py-0.5 rounded bg-emerald-950/90 border border-emerald-700/80 text-emerald-300 font-mono text-[10px] whitespace-nowrap shrink-0">
+                                                    Inspect Diff & Citation →
+                                                </span>
                                             </div>
                                             <div className="text-zinc-400 text-[11px] line-clamp-2 mt-0.5">
                                                 {finding.explanation}
@@ -343,7 +365,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </div>
                     </div>
 
-                    {/* Card B: Audit Record & HMAC Snapshot (Matches Screenshot Bottom-Right) */}
+                    {/* Card B: Audit Record & HMAC Snapshot */}
                     <div className="bg-[#121215] border border-zinc-800/90 rounded-xl p-5 space-y-4">
                         <h3 className="text-sm font-semibold text-zinc-100">
                             Audit Record & HMAC Snapshot
@@ -362,11 +384,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                     {new Date(audit.created_at_utc).toISOString().replace('T', ' ').slice(0, 19)}
                                 </span>
                             </div>
-                            <div className="flex justify-between gap-2">
+                            <div className="flex items-center justify-between gap-2">
                                 <span className="text-zinc-500">Document Hash</span>
-                                <span className="font-mono text-zinc-300 truncate max-w-[180px]">
-                                    {audit.document_revision_hash}
-                                </span>
+                                <button
+                                    type="button"
+                                    onClick={handleCopyHash}
+                                    title="Click to copy full SHA-256 revision hash"
+                                    className="inline-flex items-center gap-1.5 font-mono text-zinc-300 hover:text-emerald-400 transition-colors cursor-pointer"
+                                >
+                                    <span className="truncate max-w-[140px]">
+                                        {audit.document_revision_hash}
+                                    </span>
+                                    {copiedHash ? (
+                                        <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                    ) : (
+                                        <Copy className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                                    )}
+                                </button>
                             </div>
                             <div className="flex justify-between gap-2">
                                 <span className="text-zinc-500">Metadata</span>
